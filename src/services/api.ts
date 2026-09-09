@@ -226,3 +226,61 @@ export async function analyzeSatelliteEye(file: File): Promise<SatelliteEyeResul
   if (!res.ok) throw new Error(`Satellite eye API HTTP error ${res.status}`);
   return await res.json();
 }
+
+/**
+ * Predict 72-hour cyclone track trajectory and cone of uncertainty
+ */
+export async function predictTrack(
+  startLat: number,
+  startLon: number,
+  headingDeg = 320.0,
+  speedKts = 12.0,
+  currentWindKts = 65.0
+) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/predict/track`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start_lat: startLat,
+        start_lon: startLon,
+        heading_deg: headingDeg,
+        speed_kts: speedKts,
+        current_wind_kts: currentWindKts
+      })
+    });
+    if (!res.ok) throw new Error(`Track API error ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn('Track API fallback:', error);
+    return null;
+  }
+}
+
+/**
+ * Predict 72-hour intensity evolution (wind speed and barometric pressure)
+ */
+export async function predictIntensity(
+  currentWindKts: number,
+  currentPresHpa: number,
+  sstCelsius = 29.5,
+  vwsKnots = 8.5
+) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/predict/intensity`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_wind_kts: currentWindKts,
+        current_pres_hpa: currentPresHpa,
+        sst_celsius: sstCelsius,
+        vws_knots: vwsKnots
+      })
+    });
+    if (!res.ok) throw new Error(`Intensity API error ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn('Intensity API fallback:', error);
+    return null;
+  }
+}

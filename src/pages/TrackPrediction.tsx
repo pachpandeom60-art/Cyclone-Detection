@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import MapPanel from '../components/MapPanel';
 import TimelineControl from '../components/TimelineControl';
 import WhyButton from '../components/WhyButton';
 import type { Scenario } from '../data/mockData';
 import { baseCyclones } from '../data/mockData';
-import { Navigation, Compass, MapPin, ShieldAlert, Activity, Check } from 'lucide-react';
+import { Navigation, Compass, MapPin, ShieldAlert, Activity, Check, RefreshCw } from 'lucide-react';
+import { predictTrack } from '../services/api';
 
 const TRACK_FACTORS = [
   { label: 'Deep-layer steering flow (700-500 hPa)', value: 'East-southeasterly flow pushing system WNW', positive: true },
@@ -27,8 +28,18 @@ export default function TrackPrediction({
   const [showForecast, setShowForecast] = useState(true);
   const [showRiskZones, setShowRiskZones] = useState(true);
 
+  const [liveTrack, setLiveTrack] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
   const currentPt = scenario.track[timelineIndex] ?? scenario.track[0];
   const cy = { ...baseCyclones[0], ...scenario.cyclone };
+
+  useEffect(() => {
+    setLoading(true);
+    predictTrack(currentPt.lat || 14.5, currentPt.lon || 87.5)
+      .then(res => setLiveTrack(res))
+      .finally(() => setLoading(false));
+  }, [scenario, timelineIndex]);
 
   return (
     <div className="space-y-3.5 animate-fadeIn">
@@ -49,8 +60,9 @@ export default function TrackPrediction({
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="badge-simulated">
-              SIMULATED TRACK
+            <span className={liveTrack ? 'badge-live flex items-center gap-1' : 'badge-simulated'}>
+              {loading ? <RefreshCw size={10} className="animate-spin" /> : null}
+              {liveTrack ? 'LIVE TRAJECTORY ENGINE' : 'SIMULATED TRACK'}
             </span>
             <WhyButton
               title="Explainable AI: Trajectory Dynamics"
@@ -62,12 +74,12 @@ export default function TrackPrediction({
 
         <div className="px-3 py-2 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-between text-xs font-mono">
           <div className="flex items-center gap-4 text-slate-400">
-            <span>MODEL: <strong className="text-slate-200">Bi-ConvLSTM + Multi-Ensemble ECMWF/GFS</strong></span>
+            <span>MODEL: <strong className="text-slate-200">Bi-ConvLSTM + Beta-Drift Deflection</strong></span>
             <span>FORECAST STEP: <strong className="text-cyan-400">T+{timelineIndex * 6}h ({currentPt.time})</strong></span>
-            <span>STEERING VECTOR: <strong className="text-slate-200">WNW at 8 km/h</strong></span>
+            <span>STEERING VECTOR: <strong className="text-slate-200">320° NW at 12 kts</strong></span>
           </div>
           <div className="text-[11px] text-slate-400">
-            LANDFALL ESTIMATE: <strong className="text-amber-400">North AP / South Odisha (~72h)</strong>
+            LANDFALL PREDICTION: <strong className="text-amber-400">{liveTrack?.landfall_prediction?.location || 'North AP / South Odisha Coast (~72h)'}</strong>
           </div>
         </div>
       </div>

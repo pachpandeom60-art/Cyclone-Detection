@@ -54,12 +54,27 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
   return null;
 };
 
+import { useState, useEffect } from 'react';
 import { baseCyclones } from '../data/mockData';
+import { predictIntensity } from '../services/api';
+import { RefreshCw } from 'lucide-react';
 
 export default function IntensityForecast({ scenario }: { scenario: Scenario }) {
   const cy = { ...baseCyclones[0], ...scenario.cyclone };
   const forecast = scenario.intensityForecast;
   const peakForecast = [...forecast].sort((a, b) => b.windSpeed - a.windSpeed)[0] ?? forecast[0];
+
+  const [liveIntensity, setLiveIntensity] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    const wind = (cy as any).windSpeed || (cy as any).maxWind || 65.0;
+    const pres = (cy as any).pressure || (cy as any).centralPressure || 985.0;
+    predictIntensity(wind, pres)
+      .then(res => setLiveIntensity(res))
+      .finally(() => setLoading(false));
+  }, [scenario]);
 
   return (
     <div className="space-y-3.5 animate-fadeIn">
@@ -80,8 +95,9 @@ export default function IntensityForecast({ scenario }: { scenario: Scenario }) 
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="badge-simulated">
-              SIMULATED PREDICTION
+            <span className={liveIntensity ? 'badge-live flex items-center gap-1' : 'badge-simulated'}>
+              {loading ? <RefreshCw size={10} className="animate-spin" /> : null}
+              {liveIntensity ? 'LIVE INTENSITY ENGINE' : 'SIMULATED FORECAST'}
             </span>
             <WhyButton
               title="Explainable AI: Intensity Drivers"
@@ -93,12 +109,12 @@ export default function IntensityForecast({ scenario }: { scenario: Scenario }) 
 
         <div className="px-3 py-2 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-between text-xs font-mono">
           <div className="flex items-center gap-4 text-slate-400">
-            <span>CURRENT STAGE: <strong className="text-slate-200">{cy.classification}</strong></span>
-            <span>PEAK 48H ESTIMATE: <strong className="text-amber-400">{peakForecast.windSpeed} km/h ({peakForecast.category})</strong></span>
-            <span>RAPID INTENSIFICATION: <strong className="text-cyan-400">UNLIKELY (18% INDEX)</strong></span>
+            <span>PEAK FORECAST WIND: <strong className="text-amber-400">{liveIntensity?.peak_forecast_wind_kts ?? 98} kts</strong></span>
+            <span>MIN PRESSURE: <strong className="text-cyan-400">{liveIntensity?.minimum_forecast_pressure_hpa ?? 945} hPa</strong></span>
+            <span>RI PROBABILITY: <strong className={liveIntensity?.rapid_intensification_alert ? 'text-rose-400' : 'text-emerald-400'}>{liveIntensity?.ri_probability_pct ?? 18}%</strong></span>
           </div>
           <div className="text-[11px] text-slate-400">
-            FRAMEWORK: <strong className="text-slate-200">IMD 3-Minute Average Wind Scale</strong>
+            STAGE: <strong className="text-slate-200">{liveIntensity?.peak_classification || cy.classification}</strong>
           </div>
         </div>
       </div>

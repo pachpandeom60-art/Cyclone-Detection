@@ -20,6 +20,8 @@ from ingestion.ibtracs import IBTrACSIngestion
 from ingestion.era5 import ERA5Ingestion
 from ml.genesis_predictor import GenesisPredictor
 from ml.vision_detector import SatelliteEyeDetector
+from ml.track_predictor import TrackPredictor
+from ml.intensity_predictor import IntensityPredictor
 from ml.train_genesis import train_model
 
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +29,7 @@ logger = logging.getLogger("CycloneBackend")
 
 app = FastAPI(
     title="Cyclone AI Backend API",
-    description="Backend API service for Cyclone Genesis Prediction, Computer Vision Eye Detection, IBTrACS/ERA5 data ingestion, and GIS spatial grid modeling.",
+    description="Backend API service for Cyclone Genesis Prediction, Computer Vision Eye Detection, Track Trajectory & Intensity Forecasting.",
     version="1.0.0"
 )
 
@@ -43,18 +45,22 @@ app.add_middleware(
 # Initialize Predictor and Ingestion engines lazily / at startup
 predictor: Optional[GenesisPredictor] = None
 vision_detector: Optional[SatelliteEyeDetector] = None
+track_predictor: Optional[TrackPredictor] = None
+intensity_predictor: Optional[IntensityPredictor] = None
 ibtracs_engine: Optional[IBTrACSIngestion] = None
 era5_engine: Optional[ERA5Ingestion] = None
 
 
 @app.on_event("startup")
 def startup_event():
-    global predictor, vision_detector, ibtracs_engine, era5_engine
+    global predictor, vision_detector, track_predictor, intensity_predictor, ibtracs_engine, era5_engine
     logger.info("Initializing Cyclone AI Backend components...")
     ibtracs_engine = IBTrACSIngestion()
     era5_engine = ERA5Ingestion()
     predictor = GenesisPredictor()
     vision_detector = SatelliteEyeDetector()
+    track_predictor = TrackPredictor()
+    intensity_predictor = IntensityPredictor()
     logger.info("Backend components successfully initialized.")
 
 
@@ -77,6 +83,21 @@ class HeatmapRequest(BaseModel):
     lon_min: float = Field(60.0, description="Minimum longitude bound")
     lon_max: float = Field(95.0, description="Maximum longitude bound")
     resolution: float = Field(2.0, description="Grid step size in degrees")
+
+
+class TrackPredictionRequest(BaseModel):
+    start_lat: float = Field(14.5, description="Initial storm latitude")
+    start_lon: float = Field(87.5, description="Initial storm longitude")
+    current_wind_kts: Optional[float] = Field(65.0, description="Current max sustained wind speed in knots")
+    heading_deg: Optional[float] = Field(320.0, description="Storm trajectory heading direction in degrees (0-360)")
+    speed_kts: Optional[float] = Field(12.0, description="Forward translation speed in knots")
+
+
+class IntensityPredictionRequest(BaseModel):
+    current_wind_kts: float = Field(65.0, description="Current max sustained wind speed in knots")
+    current_pres_hpa: float = Field(985.0, description="Current central barometric pressure in hPa")
+    sst_celsius: Optional[float] = Field(29.5, description="Sea surface temperature in °C")
+    vws_knots: Optional[float] = Field(8.5, description="850-200 hPa vertical wind shear in knots")
 
 
 # Routes
@@ -124,6 +145,41 @@ async def detect_satellite_eye(file: UploadFile = File(...)):
         return analysis
     except Exception as e:
         logger.error(f"Satellite eye detection error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/predict/track")
+def predict_track(req: TrackPredictionRequest):
+    if track_predictor is None:
+        raise HTTPException(status_code=503, detail="Track predictor service not initialized")
+    try:
+        result = track_predictor.predict_track(
+            start_lat=req.start_lat,
+            start_lon=req.start_lon,
+            current_wind_kts=req.current_wind_kts or 65.0,
+            heading_deg=req.heading_deg or 320.0,
+            speed_kts=req.speed_kts or 12.0
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Track prediction error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/predict/intensity")
+def predict_intensity(req: IntensityPredictionRequest):
+    if intensity_predictor is None:
+        raise HTTPException(status_code=503, detail="Intensity predictor service not initialized")
+    try:
+        result = intensity_predictor.predict_intensity(
+            current_wind_kts=req.current_wind_kts,
+            current_pres_hpa=req.current_pres_hpa,
+            sst_celsius=req.sst_celsius or 29.5,
+            vws_knots=req.vws_knots or 8.5
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Intensity prediction error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
