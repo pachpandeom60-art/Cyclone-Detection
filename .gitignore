@@ -22,3 +22,19 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python & Backend ignores
+__pycache__/
+*.py[cod]
+*$py.class
+*.joblib
+backend/data/raw/*
+!backend/data/raw/.gitkeep
+backend/data/processed/*
+!backend/data/processed/.gitkeep
+backend/data/cache/*
+!backend/data/cache/.gitkeep
+
+# Nested directories
+Cyclone-Detection/
+
