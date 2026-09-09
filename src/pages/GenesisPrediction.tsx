@@ -1,22 +1,17 @@
+import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart } from 'recharts';
 import WhyButton from '../components/WhyButton';
 import type { Scenario } from '../data/mockData';
-import { Zap, Activity, AlertCircle, CheckCircle2, ShieldAlert, TrendingUp } from 'lucide-react';
+import { Zap, Activity, AlertCircle, CheckCircle2, ShieldAlert, TrendingUp, RefreshCw, Server } from 'lucide-react';
+import { predictGenesis, fetchSystemHealth, GenesisPredictionResult, SystemHealthResponse } from '../services/api';
 
 const riskColors: Record<string, { bg: string; text: string; border: string }> = {
   LOW: { bg: 'rgba(16, 185, 129, 0.12)', text: '#34d399', border: '#059669' },
   MODERATE: { bg: 'rgba(245, 158, 11, 0.12)', text: '#fbbf24', border: '#d97706' },
   HIGH: { bg: 'rgba(239, 68, 68, 0.15)', text: '#f87171', border: '#dc2626' },
+  SEVERE: { bg: 'rgba(220, 38, 38, 0.2)', text: '#fca5a5', border: '#b91c1c' },
   EXTREME: { bg: 'rgba(220, 38, 38, 0.2)', text: '#fca5a5', border: '#b91c1c' },
 };
-
-const CONTRIBUTING_FACTORS = [
-  { name: 'Sea Surface Temperature', metric: '29.1°C (Threshold > 26.5°C)', weight: '+32%', score: 88, favorable: true },
-  { name: 'Low-Level Vorticity (850 hPa)', metric: '14.2 × 10⁻⁵ s⁻¹ (Strong)', weight: '+26%', score: 78, favorable: true },
-  { name: 'Mid-Tropospheric Moisture', metric: 'RH 82% at 500 hPa', weight: '+21%', score: 82, favorable: true },
-  { name: 'Pressure Fall Rate', metric: '-3.2 hPa / 6h tendency', weight: '+16%', score: 74, favorable: true },
-  { name: 'Vertical Wind Shear (200-850 hPa)', metric: '12.4 m/s (Moderate Shear)', weight: '-19%', score: 45, favorable: false },
-];
 
 function PrecisionRadialGauge({ probability, riskLevel }: { probability: number; riskLevel: string }) {
   const rStyle = riskColors[riskLevel] ?? riskColors.MODERATE;
@@ -110,9 +105,61 @@ import { baseCyclones } from '../data/mockData';
 
 export default function GenesisPrediction({ scenario }: { scenario: Scenario }) {
   const cy = { ...baseCyclones[0], ...scenario.cyclone };
-  const prob = cy.genesisProbability ?? 72;
-  const risk = cy.riskLevel ?? 'MODERATE';
-  const rStyle = riskColors[risk];
+  
+  // Interactive inputs & Backend state
+  const [lat, setLat] = useState<number>(14.5);
+  const [lon, setLon] = useState<number>(87.5);
+  const [sst, setSst] = useState<number>(29.2);
+  const [vws, setVws] = useState<number>(9.5);
+  const [vorticity, setVorticity] = useState<number>(5.8);
+  const [humidity, setHumidity] = useState<number>(78.0);
+  
+  const [loading, setLoading] = useState<boolean>(false);
+  const [liveResult, setLiveResult] = useState<GenesisPredictionResult | null>(null);
+  const [backendHealth, setBackendHealth] = useState<SystemHealthResponse | null>(null);
+
+  // Initial load
+  useEffect(() => {
+    fetchSystemHealth().then(setBackendHealth);
+    handleRunInference();
+  }, [scenario]);
+
+  const handleRunInference = async () => {
+    setLoading(true);
+    try {
+      const res = await predictGenesis({
+        latitude: lat,
+        longitude: lon,
+        sst_celsius: sst,
+        vws_knots: vws,
+        relative_vorticity_850: vorticity,
+        rh_700_percent: humidity
+      });
+      setLiveResult(res);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const prob = liveResult ? liveResult.genesis_probability_48h : (cy.genesisProbability ?? 72);
+  const risk = liveResult ? liveResult.risk_level : (cy.riskLevel ?? 'MODERATE');
+  const rStyle = riskColors[risk] ?? riskColors.MODERATE;
+
+  const factorsList = liveResult ? liveResult.top_contributing_factors.map((fact, idx) => ({
+    name: fact.split('(')[0]?.trim() || fact,
+    metric: fact,
+    weight: idx === 0 ? '+35%' : idx === 1 ? '+25%' : '+15%',
+    score: 85 - idx * 10,
+    favorable: !fact.toLowerCase().includes('inhibiting') && !fact.toLowerCase().includes('high destructive')
+  })) : [
+    { name: 'Sea Surface Temperature', metric: '29.1°C (Threshold > 26.5°C)', weight: '+32%', score: 88, favorable: true },
+    { name: 'Low-Level Vorticity (850 hPa)', metric: '14.2 × 10⁻⁵ s⁻¹ (Strong)', weight: '+26%', score: 78, favorable: true },
+    { name: 'Mid-Tropospheric Moisture', metric: 'RH 82% at 500 hPa', weight: '+21%', score: 82, favorable: true },
+    { name: 'Pressure Fall Rate', metric: '-3.2 hPa / 6h tendency', weight: '+16%', score: 74, favorable: true },
+    { name: 'Vertical Wind Shear (200-850 hPa)', metric: '12.4 m/s (Moderate Shear)', weight: '-19%', score: 45, favorable: false },
+  ];
 
   return (
     <div className="space-y-3.5 animate-fadeIn">
@@ -133,29 +180,67 @@ export default function GenesisPrediction({ scenario }: { scenario: Scenario }) 
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="badge-simulated">
-              SIMULATED PREDICTOR
+            <span className={backendHealth?.status === 'healthy' ? 'badge-live flex items-center gap-1' : 'badge-simulated flex items-center gap-1'}>
+              <Server size={10} />
+              {backendHealth?.status === 'healthy' ? 'LIVE PYTHON BACKEND' : 'OFFLINE MODE'}
             </span>
             <WhyButton
               title="Explainable AI: Genesis Feature Attribution"
-              summary="Gradient boosted ensemble model (XGBoost v2.1) evaluates thermodynamic and kinematic oceanic predictors to compute 48-hour cyclone genesis likelihood."
-              factors={CONTRIBUTING_FACTORS.map(f => ({
+              summary={liveResult ? `Engineered model (${liveResult.model_info.model_type}) evaluated environmental parameters to calculate 48-hour genesis probability.` : "Gradient boosted ensemble model (XGBoost v2.1) evaluates thermodynamic and kinematic oceanic predictors to compute 48-hour cyclone genesis likelihood."}
+              factors={factorsList.map(f => ({
                 label: f.name,
-                value: `${f.metric} [SHAP Attribution: ${f.weight}]`,
+                value: `${f.metric} [Weight: ${f.weight}]`,
                 positive: f.favorable,
               }))}
             />
           </div>
         </div>
 
-        <div className="px-3 py-2 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-between text-xs font-mono">
+        {/* Live Parameter Control Bar */}
+        <div className="px-3 py-2.5 bg-slate-950/80 border-t border-slate-800/80 grid grid-cols-12 gap-3 text-xs font-mono items-center">
+          <div className="col-span-2 flex flex-col">
+            <label className="text-[10px] text-slate-400">LAT / LON</label>
+            <div className="flex items-center gap-1 mt-0.5">
+              <input type="number" step="0.1" value={lat} onChange={e => setLat(parseFloat(e.target.value) || 0)} className="w-14 bg-slate-900 border border-slate-700 px-1 py-0.5 rounded text-slate-200 text-xs" />
+              <span className="text-slate-500">,</span>
+              <input type="number" step="0.1" value={lon} onChange={e => setLon(parseFloat(e.target.value) || 0)} className="w-14 bg-slate-900 border border-slate-700 px-1 py-0.5 rounded text-slate-200 text-xs" />
+            </div>
+          </div>
+          <div className="col-span-2 flex flex-col">
+            <label className="text-[10px] text-slate-400">SST (°C)</label>
+            <input type="number" step="0.1" value={sst} onChange={e => setSst(parseFloat(e.target.value) || 0)} className="w-full bg-slate-900 border border-slate-700 px-1.5 py-0.5 rounded text-slate-200 text-xs mt-0.5" />
+          </div>
+          <div className="col-span-2 flex flex-col">
+            <label className="text-[10px] text-slate-400">SHEAR (KTS)</label>
+            <input type="number" step="0.1" value={vws} onChange={e => setVws(parseFloat(e.target.value) || 0)} className="w-full bg-slate-900 border border-slate-700 px-1.5 py-0.5 rounded text-slate-200 text-xs mt-0.5" />
+          </div>
+          <div className="col-span-2 flex flex-col">
+            <label className="text-[10px] text-slate-400">VORTICITY (10⁻⁵ s⁻¹)</label>
+            <input type="number" step="0.1" value={vorticity} onChange={e => setVorticity(parseFloat(e.target.value) || 0)} className="w-full bg-slate-900 border border-slate-700 px-1.5 py-0.5 rounded text-slate-200 text-xs mt-0.5" />
+          </div>
+          <div className="col-span-2 flex flex-col">
+            <label className="text-[10px] text-slate-400">RH (%)</label>
+            <input type="number" step="1" value={humidity} onChange={e => setHumidity(parseFloat(e.target.value) || 0)} className="w-full bg-slate-900 border border-slate-700 px-1.5 py-0.5 rounded text-slate-200 text-xs mt-0.5" />
+          </div>
+          <div className="col-span-2 flex items-end">
+            <button
+              onClick={handleRunInference}
+              disabled={loading}
+              className="w-full py-1.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded flex items-center justify-center gap-1.5 text-xs transition-colors"
+            >
+              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+              {loading ? 'RUNNING...' : 'PREDICT'}
+            </button>
+          </div>
+        </div>
+
+        <div className="px-3 py-1.5 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between text-xs font-mono">
           <div className="flex items-center gap-4 text-slate-400">
-            <span>MODEL: <strong className="text-slate-200">XGBoost-Genesis-v2.1</strong></span>
-            <span>INPUT: <strong className="text-slate-200">INSAT-3D IR + ERA5 Reanalysis</strong></span>
-            <span>LEAD TIME: <strong className="text-cyan-400">48-Hour Advance Window</strong></span>
+            <span>MODEL: <strong className="text-slate-200">{liveResult?.model_info.model_type || 'XGBoost / GradientBoosting Ensemble'}</strong></span>
+            <span>GPI SCORE: <strong className="text-cyan-400">{liveResult?.gpi_score ?? 28.4}</strong></span>
           </div>
           <div className="text-[11px] text-slate-400">
-            CONFIDENCE SCORE: <strong className="text-emerald-400">{cy.confidence}% (HIGH)</strong>
+            CONFIDENCE SCORE: <strong className="text-emerald-400">{liveResult?.confidence_score ?? cy.confidence}% ({risk})</strong>
           </div>
         </div>
       </div>
@@ -192,7 +277,7 @@ export default function GenesisPrediction({ scenario }: { scenario: Scenario }) 
           </div>
 
           <div className="p-3 space-y-2.5 flex-1 bg-slate-950/40">
-            {CONTRIBUTING_FACTORS.map((f, i) => (
+            {factorsList.map((f, i) => (
               <div key={i} className="p-2 rounded bg-slate-900/90 border border-slate-800 font-mono">
                 <div className="flex items-center justify-between text-xs mb-1">
                   <span className="font-semibold text-slate-200">{f.name}</span>

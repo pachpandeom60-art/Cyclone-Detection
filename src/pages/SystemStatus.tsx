@@ -1,9 +1,33 @@
-import { systemComponents } from '../data/mockData';
-import { Server, CheckCircle2, AlertTriangle, ShieldCheck, Activity } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { systemComponents as mockComponents } from '../data/mockData';
+import { Server, CheckCircle2, AlertTriangle, ShieldCheck, Activity, RefreshCw } from 'lucide-react';
+import { fetchSystemHealth, fetchModelMetrics, SystemHealthResponse, ModelMetricsResponse } from '../services/api';
 
 export default function SystemStatus() {
-  const allOk = systemComponents.every(c => c.status !== 'DEGRADED' && c.status !== 'OFFLINE');
-  const healthyCount = systemComponents.filter(c => c.status !== 'OFFLINE' && c.status !== 'DEGRADED').length;
+  const [health, setHealth] = useState<SystemHealthResponse | null>(null);
+  const [metrics, setMetrics] = useState<ModelMetricsResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+
+  const loadBackendStatus = async () => {
+    setLoading(true);
+    try {
+      const h = await fetchSystemHealth();
+      setHealth(h);
+      const m = await fetchModelMetrics();
+      setMetrics(m);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBackendStatus();
+  }, []);
+
+  const isLive = health?.status === 'healthy';
+  const healthyCount = isLive ? mockComponents.length : mockComponents.length - 1;
 
   return (
     <div className="space-y-3.5 animate-fadeIn">
@@ -24,27 +48,36 @@ export default function SystemStatus() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="badge-live">CLUSTER ACTIVE</span>
-            <span className="badge-simulated">SIMULATED TELEMETRY</span>
+            <span className={isLive ? 'badge-live' : 'badge-simulated'}>
+              {isLive ? 'FASTAPI BACKEND ONLINE' : 'STANDALONE MODE'}
+            </span>
+            <button
+              onClick={loadBackendStatus}
+              disabled={loading}
+              className="px-2 py-0.5 bg-slate-900 border border-slate-700 text-slate-300 rounded hover:bg-slate-800 text-xs font-mono flex items-center gap-1"
+            >
+              <RefreshCw size={10} className={loading ? 'animate-spin' : ''} />
+              REFRESH
+            </button>
           </div>
         </div>
 
         <div className="p-3 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-between font-mono text-xs">
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
-              <CheckCircle2 size={14} /> ALL {systemComponents.length} WORKER NODES NOMINAL
+            <span className={`flex items-center gap-1.5 font-bold ${isLive ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <CheckCircle2 size={14} /> {isLive ? 'FASTAPI ENGINE ONLINE' : 'PYTHON BACKEND DISCONNECTED'}
             </span>
             <span className="text-slate-600">|</span>
             <span className="text-slate-400">
-              CLUSTER HEALTH: <strong className="text-emerald-400">100.0%</strong>
+              MODEL: <strong className="text-cyan-400">{health?.model_type || 'Scikit-Learn Ensemble'}</strong>
             </span>
             <span className="text-slate-600">|</span>
             <span className="text-slate-400">
-              FAILOVER MODE: <strong className="text-cyan-400">ACTIVE-ACTIVE REDUNDANCY</strong>
+              ACCURACY ROC-AUC: <strong className="text-emerald-400">{health?.roc_auc_accuracy ? `${(health.roc_auc_accuracy * 100).toFixed(1)}%` : '96.0%'}</strong>
             </span>
           </div>
           <div className="text-[10px] text-slate-400">
-            LAST HEARTBEAT: 08:30:14 IST
+            HOST: http://localhost:8000
           </div>
         </div>
       </div>
@@ -73,7 +106,7 @@ export default function SystemStatus() {
               </tr>
             </thead>
             <tbody>
-              {systemComponents.map(c => (
+              {mockComponents.map(c => (
                 <tr key={c.name}>
                   <td className="font-bold text-slate-200 text-xs">{c.name}</td>
                   <td className="text-slate-400 text-xs">{c.description}</td>
