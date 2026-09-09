@@ -1,0 +1,64 @@
+openapi: 3.0.3
+info:
+  title: Cyclone AI Forecast API
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      summary: Service health
+      responses:
+        '200':
+          description: Healthy service
+  /v1/systems:
+    get:
+      summary: Current monitored tropical systems
+      responses:
+        '200':
+          description: Systems
+  /v1/systems/{systemId}:
+    get:
+      summary: Current state and latest forecast for a system
+      parameters:
+        - in: path
+          name: systemId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: System forecast
+        '404':
+          description: System not found
+  /v1/systems/{systemId}/track:
+    get:
+      summary: Track forecast with uncertainty
+      parameters:
+        - in: path
+          name: systemId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Track forecast
+  /v1/systems/{systemId}/intensity:
+    get:
+      summary: Intensity forecast
+      parameters:
+        - in: path
+          name: systemId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Intensity forecast
+  /v1/genesis:
+    get:
+      summary: Active genesis probabilities
+      responses:
+        '200':
+          description: Genesis probabilities
+  /v1/alerts:
+    get:
+      summary: Current generated alerts
+      responses:
+        '200':
+          description: Alerts

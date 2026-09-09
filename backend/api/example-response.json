@@ -1,0 +1,26 @@
+{
+  "system": {
+    "id": "example-system",
+    "basin": "Bay of Bengal",
+    "status": "ACTIVE",
+    "observedAt": "2026-09-09T05:30:00Z",
+    "position": { "lat": 14.8, "lon": 87.2 },
+    "windKph": 45,
+    "pressureHpa": 998,
+    "classification": "Depression",
+    "source": "provider-name"
+  },
+  "forecast": {
+    "modelVersion": "track-model-0.1.0",
+    "generatedAt": "2026-09-09T05:35:00Z",
+    "track": [],
+    "intensity": [],
+    "genesisProbability48h": null,
+    "confidence": null
+  },
+  "dataQuality": {
+    "observationAgeMinutes": 5,
+    "missingFeatures": [],
+    "sourceCount": 1
+  }
+}
