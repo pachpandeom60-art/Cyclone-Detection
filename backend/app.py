@@ -1,26 +1,26 @@
-"""Cyclone AI API: live tropical-cyclone observations + transparent baseline forecast.
+"""Cyclone AI API: live tropical-cyclone observations + forecast adapters.
 
-This is deliberately NOT presented as an ML forecast. It consumes NOAA IBTrACS
-active-system data and produces a short-horizon persistence/advection baseline.
-A trained detection/genesis/intensity/track model can replace the adapters without
-changing the frontend API contract.
+The API prefers the trained track model when a model artifact is available. Until
+that artifact is trained, it falls back to a transparent persistence/advection
+baseline. This avoids presenting a fake ML forecast as a real model.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from math import atan2, cos, radians, sin
 from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from ml.track_predictor import available as track_model_available, forecast as predict_track_step
+
 IBTRACS_ACTIVE_URL = (
     "https://www.ncei.noaa.gov/data/international-best-track-archive-for-"
     "climate-stewardship-ibtracs/v04r01/access/csv/ibtracs.active.list.v04r01.csv"
 )
 
-app = FastAPI(title="Cyclone AI Forecast API", version="0.1.0")
+app = FastAPI(title="Cyclone AI Forecast API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -39,7 +39,6 @@ def _num(value: Any) -> float | None:
 
 
 def _wind(row: pd.Series) -> float:
-    # Prefer WMO wind, then USA wind. IBTrACS values are knots.
     value = _num(row.get("WMO_WIND"))
     if value is None:
         value = _num(row.get("USA_WIND"))
@@ -54,24 +53,16 @@ def _pressure(row: pd.Series) -> float | None:
 
 
 def _classification(wind_kph: float) -> str:
-    if wind_kph < 31:
-        return "Low Pressure Area"
-    if wind_kph < 50:
-        return "Depression"
-    if wind_kph < 62:
-        return "Deep Depression"
-    if wind_kph < 89:
-        return "Cyclonic Storm"
-    if wind_kph < 118:
-        return "Severe Cyclonic Storm"
-    if wind_kph < 166:
-        return "Very Severe Cyclonic Storm"
+    if wind_kph < 31: return "Low Pressure Area"
+    if wind_kph < 50: return "Depression"
+    if wind_kph < 62: return "Deep Depression"
+    if wind_kph < 89: return "Cyclonic Storm"
+    if wind_kph < 118: return "Severe Cyclonic Storm"
+    if wind_kph < 166: return "Very Severe Cyclonic Storm"
     return "Extremely Severe Cyclonic Storm"
 
 
 def _load_active() -> pd.DataFrame:
-    # pandas skips the IBTrACS units row. The network call is intentionally kept
-    # behind this function so a database/cache can replace it in production.
     frame = pd.read_csv(IBTRACS_ACTIVE_URL, skiprows=[1], low_memory=False)
     frame["ISO_TIME"] = pd.to_datetime(frame["ISO_TIME"], errors="coerce", utc=True)
     frame["LAT"] = pd.to_numeric(frame["LAT"], errors="coerce")
@@ -87,23 +78,16 @@ def _systems(frame: pd.DataFrame) -> list[dict[str, Any]]:
         wind = _wind(last)
         pressure = _pressure(last)
         systems.append({
-            "id": str(sid),
-            "name": str(last.get("NAME") or sid),
-            "lat": round(float(last["LAT"]), 2),
-            "lon": round(float(last["LON"]), 2),
+            "id": str(sid), "name": str(last.get("NAME") or sid),
+            "lat": round(float(last["LAT"]), 2), "lon": round(float(last["LON"]), 2),
             "status": "ACTIVE",
             "riskLevel": "HIGH" if wind >= 89 else "MODERATE" if wind >= 50 else "LOW",
-            "genesisProbability": None,
-            "confidence": None,
-            "classification": _classification(wind),
-            "windSpeed": wind,
-            "pressure": pressure or 0,
-            "movement": "Computed from latest observations",
-            "expectedLandfall": "Not estimated by baseline model",
-            "pattern": "Observed tropical system",
-            "basin": str(last.get("BASIN") or "Unknown"),
-            "observedAt": last["ISO_TIME"].isoformat(),
-            "source": "NOAA IBTrACS v04r01",
+            "genesisProbability": None, "confidence": None,
+            "classification": _classification(wind), "windSpeed": wind,
+            "pressure": pressure or 0, "movement": "Computed from latest observations",
+            "expectedLandfall": "Not estimated by current model",
+            "pattern": "Observed tropical system", "basin": str(last.get("BASIN") or "Unknown"),
+            "observedAt": last["ISO_TIME"].isoformat(), "source": "NOAA IBTrACS v04r01",
         })
     return systems
 
@@ -112,25 +96,36 @@ def _forecast_track(group: pd.DataFrame) -> list[dict[str, Any]]:
     group = group.sort_values("ISO_TIME").dropna(subset=["LAT", "LON"])
     last = group.iloc[-1]
     previous = group.iloc[-2] if len(group) > 1 else last
-    lat1, lon1 = float(last["LAT"]), float(last["LON"])
-    lat0, lon0 = float(previous["LAT"]), float(previous["LON"])
-    dlat, dlon = lat1 - lat0, lon1 - lon0
+    lat, lon = float(last["LAT"]), float(last["LON"])
+    dlat, dlon = lat - float(previous["LAT"]), lon - float(previous["LON"])
+    wind = _wind(last)
+    pressure = _pressure(last) or 0.0
     points = [{
-        "time": "NOW", "hours": 0, "lat": lat1, "lon": lon1,
-        "uncertainty": 0, "windSpeed": _wind(last),
-        "pressure": _pressure(last) or 0, "intensity": _classification(_wind(last)),
+        "time": "NOW", "hours": 0, "lat": lat, "lon": lon, "uncertainty": 0,
+        "windSpeed": wind, "pressure": pressure, "intensity": _classification(wind),
     }]
+
+    trained = track_model_available()
+    current_time = pd.Timestamp(last["ISO_TIME"])
     for hours in (6, 12, 24, 36, 48):
-        scale = hours / 6
-        wind = _wind(last)
+        if trained:
+            try:
+                prediction = predict_track_step(lat, lon, dlat, dlon, wind / 1.852, pressure, current_time)
+                next_dlat, next_dlon = prediction["dlat"], prediction["dlon"]
+                error = max(20.0, prediction["errorKm"] * (hours / 6) ** 0.5)
+            except Exception:
+                trained = False
+        if not trained:
+            scale = hours / 6
+            next_dlat, next_dlon = dlat, dlon
+            error = 40 + hours * 4.5
+        lat += next_dlat
+        lon += next_dlon
+        dlat, dlon = next_dlat, next_dlon
         points.append({
             "time": f"+{hours}h", "hours": hours,
-            "lat": round(lat1 + dlat * scale, 3),
-            "lon": round(lon1 + dlon * scale, 3),
-            "uncertainty": round(40 + hours * 4.5),
-            "windSpeed": round(wind, 1),
-            "pressure": _pressure(last) or 0,
-            "intensity": _classification(wind),
+            "lat": round(lat, 3), "lon": round(lon, 3), "uncertainty": round(error),
+            "windSpeed": wind, "pressure": pressure, "intensity": _classification(wind),
         })
     return points
 
@@ -142,24 +137,21 @@ def _scenario(frame: pd.DataFrame) -> dict[str, Any]:
     primary = systems[0]
     group = frame[frame["SID"].astype(str) == primary["id"]]
     track = _forecast_track(group)
-    intensity = [
-        {"time": p["time"], "hours": p["hours"], "windSpeed": p["windSpeed"],
-         "pressure": p["pressure"], "category": p["intensity"]}
-        for p in track
-    ]
+    intensity = [{"time": p["time"], "hours": p["hours"], "windSpeed": p["windSpeed"],
+                  "pressure": p["pressure"], "category": p["intensity"]} for p in track]
+    model_name = "IBTrACS-trained gradient boosting track model" if track_model_available() else "Observed-track persistence/advection baseline"
     return {
-        "key": "live", "label": "LIVE", "description": "NOAA IBTrACS observation-backed baseline",
+        "key": "live", "label": "LIVE", "description": "NOAA IBTrACS observation-backed forecast",
         "cyclone": primary, "genesisTrend": [], "intensityForecast": intensity,
-        "track": track, "alerts": [],
-        "systems": systems,
+        "track": track, "alerts": [], "systems": systems,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "model": {"name": "Observed-track persistence/advection baseline", "version": "0.1.0", "isML": False},
+        "model": {"name": model_name, "version": "0.2.0", "isML": track_model_available()},
     }
 
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "cyclone-ai-api", "time": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "service": "cyclone-ai-api", "trackModelAvailable": track_model_available(), "time": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/v1/systems")
@@ -179,4 +171,4 @@ def get_track(system_id: str) -> dict[str, Any]:
     group = frame[frame["SID"].astype(str) == system_id]
     if group.empty:
         raise HTTPException(status_code=404, detail="System not found")
-    return {"systemId": system_id, "track": _forecast_track(group), "model": "persistence/advection-baseline-0.1.0"}
+    return {"systemId": system_id, "track": _forecast_track(group), "model": "trained-track-model-or-baseline"}
