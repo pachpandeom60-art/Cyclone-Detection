@@ -10,7 +10,7 @@ import sys
 import logging
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 # Ensure local modules are resolvable
@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ingestion.ibtracs import IBTrACSIngestion
 from ingestion.era5 import ERA5Ingestion
 from ml.genesis_predictor import GenesisPredictor
+from ml.vision_detector import SatelliteEyeDetector
 from ml.train_genesis import train_model
 
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +27,7 @@ logger = logging.getLogger("CycloneBackend")
 
 app = FastAPI(
     title="Cyclone AI Backend API",
-    description="Backend API service for Cyclone Genesis Prediction, IBTrACS/ERA5 data ingestion, and GIS spatial grid modeling.",
+    description="Backend API service for Cyclone Genesis Prediction, Computer Vision Eye Detection, IBTrACS/ERA5 data ingestion, and GIS spatial grid modeling.",
     version="1.0.0"
 )
 
@@ -41,17 +42,19 @@ app.add_middleware(
 
 # Initialize Predictor and Ingestion engines lazily / at startup
 predictor: Optional[GenesisPredictor] = None
+vision_detector: Optional[SatelliteEyeDetector] = None
 ibtracs_engine: Optional[IBTrACSIngestion] = None
 era5_engine: Optional[ERA5Ingestion] = None
 
 
 @app.on_event("startup")
 def startup_event():
-    global predictor, ibtracs_engine, era5_engine
+    global predictor, vision_detector, ibtracs_engine, era5_engine
     logger.info("Initializing Cyclone AI Backend components...")
     ibtracs_engine = IBTrACSIngestion()
     era5_engine = ERA5Ingestion()
     predictor = GenesisPredictor()
+    vision_detector = SatelliteEyeDetector()
     logger.info("Backend components successfully initialized.")
 
 
@@ -108,6 +111,19 @@ def predict_genesis(req: GenesisPredictionRequest):
         return result
     except Exception as e:
         logger.error(f"Inference error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/predict/satellite-eye")
+async def detect_satellite_eye(file: UploadFile = File(...)):
+    if vision_detector is None:
+        raise HTTPException(status_code=503, detail="Vision detector service not initialized")
+    try:
+        content = await file.read()
+        analysis = vision_detector.analyze_image_bytes(content)
+        return analysis
+    except Exception as e:
+        logger.error(f"Satellite eye detection error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

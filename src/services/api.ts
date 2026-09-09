@@ -44,6 +44,21 @@ export interface GenesisPredictionResult {
   };
 }
 
+export interface SatelliteEyeResult {
+  eye_detected: boolean;
+  centroid_x: number;
+  centroid_y: number;
+  eye_radius_px: number;
+  eye_diameter_km: number;
+  dvorak_t_number: string;
+  estimated_max_wind_kts: number;
+  eye_wall_symmetry_pct: number;
+  cloud_top_temp_celsius: number;
+  classification: string;
+  annotated_image_base64: string;
+  error?: string;
+}
+
 export interface HeatmapPoint {
   lat: number;
   lon: number;
@@ -193,5 +208,21 @@ export async function fetchModelMetrics(): Promise<ModelMetricsResponse | null> 
 export async function triggerModelRetrain(): Promise<{ message: string }> {
   const res = await fetch(`${API_BASE_URL}/api/ml/train`, { method: 'POST' });
   if (!res.ok) throw new Error(`Train trigger HTTP error ${res.status}`);
+  return await res.json();
+}
+
+/**
+ * Upload satellite imagery and run Computer Vision Eye Detection analysis
+ */
+export async function analyzeSatelliteEye(file: File): Promise<SatelliteEyeResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch(`${API_BASE_URL}/api/predict/satellite-eye`, {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!res.ok) throw new Error(`Satellite eye API HTTP error ${res.status}`);
   return await res.json();
 }
