@@ -284,3 +284,39 @@ export async function predictIntensity(
     return null;
   }
 }
+
+/**
+ * Fetch CAP Emergency Advisories and Port Warning Bulletins
+ */
+export async function fetchAlertBulletins(stormName = 'CYCLONE AL-01', lat = 15.5, lon = 87.2, windKts = 90.0) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/alerts/bulletins?storm_name=${encodeURIComponent(stormName)}&lat=${lat}&lon=${lon}&wind_kts=${windKts}`);
+    if (!res.ok) throw new Error(`Alert bulletins error ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn('Bulletins API fallback:', error);
+    return { count: 0, bulletins: [] };
+  }
+}
+
+/**
+ * Connect to WebSocket Telemetry Stream (ws://localhost:8000/ws/telemetry)
+ */
+export function connectTelemetryWebSocket(onMessage: (data: any) => void): WebSocket | null {
+  try {
+    const wsUrl = API_BASE_URL.replace(/^http/, 'ws') + '/ws/telemetry';
+    const socket = new WebSocket(wsUrl);
+    socket.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        onMessage(payload);
+      } catch (err) {
+        console.error('WS parse error:', err);
+      }
+    };
+    return socket;
+  } catch (err) {
+    console.warn('WebSocket connection failed:', err);
+    return null;
+  }
+}

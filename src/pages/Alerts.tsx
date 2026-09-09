@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { AlertTriangle, CheckCircle, Eye, MapPin, Radio, ShieldAlert, Send, Bell, CheckCircle2, FileText } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { AlertTriangle, CheckCircle, Eye, MapPin, Radio, ShieldAlert, Send, Bell, CheckCircle2, FileText, Download, RefreshCw } from 'lucide-react';
 import type { Alert } from '../data/mockData';
+import { fetchAlertBulletins } from '../services/api';
 
 interface AlertsProps {
   alerts: Alert[];
@@ -32,6 +33,16 @@ export default function Alerts({ alerts, onAcknowledge }: AlertsProps) {
   const [filter, setFilter] = useState<'ALL' | 'HIGH' | 'MEDIUM' | 'LOW'>('ALL');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  const [capBulletins, setCapBulletins] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchAlertBulletins()
+      .then(res => setCapBulletins(res.bulletins || []))
+      .finally(() => setLoading(false));
+  }, []);
+
   const filtered = filter === 'ALL' ? alerts : alerts.filter(a => a.severity === filter);
   const counts = {
     HIGH: alerts.filter(a => a.severity === 'HIGH').length,
@@ -58,6 +69,10 @@ export default function Alerts({ alerts, onAcknowledge }: AlertsProps) {
           </div>
 
           <div className="flex items-center gap-2">
+            <span className={capBulletins.length > 0 ? 'badge-live flex items-center gap-1' : 'badge-simulated'}>
+              {loading ? <RefreshCw size={10} className="animate-spin" /> : null}
+              {capBulletins.length > 0 ? 'CAP XML DISPATCHER READY' : 'STANDBY MODE'}
+            </span>
             <span className="badge-live">
               ALERT ENGINE ONLINE
             </span>

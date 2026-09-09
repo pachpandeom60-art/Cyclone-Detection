@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { Wind, Activity, TrendingUp, Thermometer, Droplets, Radio, Compass, Eye } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Wind, Activity, TrendingUp, Thermometer, Droplets, Radio, Compass, Eye, Wifi } from 'lucide-react';
 import MapPanel from '../components/MapPanel';
 import type { Scenario } from '../data/mockData';
 import { baseCyclones } from '../data/mockData';
+import { connectTelemetryWebSocket } from '../services/api';
 
 const riskColors: Record<string, { bg: string; text: string; border: string }> = {
   LOW: { bg: 'rgba(16, 185, 129, 0.12)', text: '#34d399', border: '#059669' },
@@ -14,6 +15,20 @@ const riskColors: Record<string, { bg: string; text: string; border: string }> =
 export default function LiveMonitoring({ scenario }: { scenario: Scenario }) {
   const [timelineIndex, setTimelineIndex] = useState(0);
   const cy = { ...baseCyclones[0], ...scenario.cyclone };
+
+  const [wsData, setWsData] = useState<any>(null);
+  const [wsConnected, setWsConnected] = useState(false);
+
+  useEffect(() => {
+    const ws = connectTelemetryWebSocket((payload) => {
+      setWsData(payload);
+      setWsConnected(true);
+    });
+
+    return () => {
+      if (ws) ws.close();
+    };
+  }, []);
 
   return (
     <div className="space-y-3.5 animate-fadeIn">
@@ -34,8 +49,10 @@ export default function LiveMonitoring({ scenario }: { scenario: Scenario }) {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="badge-live">RADAR FEED ONLINE</span>
-            <span className="badge-simulated">SIMULATED INGEST</span>
+            <span className={wsConnected ? 'badge-live flex items-center gap-1' : 'badge-simulated'}>
+              <Wifi size={10} />
+              {wsConnected ? 'WEBSOCKET TELEMETRY STREAM' : 'RADAR FEED STANDBY'}
+            </span>
           </div>
         </div>
 

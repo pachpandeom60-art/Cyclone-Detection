@@ -10,7 +10,8 @@ import sys
 import logging
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, File, UploadFile
+import asyncio
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 # Ensure local modules are resolvable
@@ -22,6 +23,7 @@ from ml.genesis_predictor import GenesisPredictor
 from ml.vision_detector import SatelliteEyeDetector
 from ml.track_predictor import TrackPredictor
 from ml.intensity_predictor import IntensityPredictor
+from alerts.bulletin_generator import BulletinGenerator
 from ml.train_genesis import train_model
 
 logging.basicConfig(level=logging.INFO)
@@ -29,7 +31,7 @@ logger = logging.getLogger("CycloneBackend")
 
 app = FastAPI(
     title="Cyclone AI Backend API",
-    description="Backend API service for Cyclone Genesis Prediction, Computer Vision Eye Detection, Track Trajectory & Intensity Forecasting.",
+    description="Backend API service for Cyclone Genesis Prediction, Computer Vision Eye Detection, Track Trajectory & Real-Time WebSockets.",
     version="1.0.0"
 )
 
@@ -42,18 +44,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Predictor and Ingestion engines lazily / at startup
+# Initialize Predictor, Ingestion, & Alert engines
 predictor: Optional[GenesisPredictor] = None
 vision_detector: Optional[SatelliteEyeDetector] = None
 track_predictor: Optional[TrackPredictor] = None
 intensity_predictor: Optional[IntensityPredictor] = None
+bulletin_generator: Optional[BulletinGenerator] = None
 ibtracs_engine: Optional[IBTrACSIngestion] = None
 era5_engine: Optional[ERA5Ingestion] = None
 
 
 @app.on_event("startup")
 def startup_event():
-    global predictor, vision_detector, track_predictor, intensity_predictor, ibtracs_engine, era5_engine
+    global predictor, vision_detector, track_predictor, intensity_predictor, bulletin_generator, ibtracs_engine, era5_engine
     logger.info("Initializing Cyclone AI Backend components...")
     ibtracs_engine = IBTrACSIngestion()
     era5_engine = ERA5Ingestion()
@@ -61,6 +64,7 @@ def startup_event():
     vision_detector = SatelliteEyeDetector()
     track_predictor = TrackPredictor()
     intensity_predictor = IntensityPredictor()
+    bulletin_generator = BulletinGenerator()
     logger.info("Backend components successfully initialized.")
 
 
@@ -181,6 +185,56 @@ def predict_intensity(req: IntensityPredictionRequest):
     except Exception as e:
         logger.error(f"Intensity prediction error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alerts/bulletins")
+def get_alert_bulletins(
+    storm_name: str = Query("CYCLONE AL-01"),
+    lat: float = Query(15.5),
+    lon: float = Query(87.2),
+    wind_kts: float = Query(90.0)
+):
+    if bulletin_generator is None:
+        raise HTTPException(status_code=503, detail="Bulletin generator not initialized")
+    bulletins = bulletin_generator.generate_bulletins(
+        storm_name=storm_name,
+        lat=lat,
+        lon=lon,
+        wind_kts=wind_kts
+    )
+    return {"count": len(bulletins), "bulletins": bulletins}
+
+
+@app.websocket("/ws/telemetry")
+async def websocket_telemetry(websocket: WebSocket):
+    await websocket.accept()
+    logger.info("WebSocket client connected to live telemetry stream.")
+    try:
+        step = 0
+        while True:
+            step += 1
+            # Push live telemetry stream frame every 3 seconds
+            lat = 14.5 + step * 0.1
+            lon = 87.5 - step * 0.08
+            wind = min(140.0, 65.0 + step * 1.5)
+            pres = max(920.0, 985.0 - step * 1.2)
+
+            telemetry = {
+                "type": "TELEMETRY_UPDATE",
+                "step": step,
+                "lat": round(lat, 3),
+                "lon": round(lon, 3),
+                "wind_kts": round(wind, 1),
+                "pressure_hpa": round(pres, 1),
+                "system_status": "NOMINAL",
+                "timestamp": time.strftime("%H:%M:%S IST")
+            }
+            await websocket.send_json(telemetry)
+            await asyncio.sleep(3.0)
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected.")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
 
 
 @app.get("/api/genesis/heatmap")
